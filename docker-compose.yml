@@ -9,6 +9,7 @@ services:
       - .:/app
     command: air main.go
   db:
+    container_name: postgres
     image: postgres:15
     environment:
       - POSTGRES_USER=postgres

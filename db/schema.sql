@@ -6,7 +6,7 @@ CREATE TABLE
         nickname varchar(32) UNIQUE NOT NULL,
         "name" varchar(100) NOT NULL,
         birthdate date NOT NULL,
-        stack text NULL,
+        stack text[] NULL,
         search text NOT NULL
     );
 
