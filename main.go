@@ -1,29 +1,36 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"rinha-backend/gen/rinha/public/model"
-	"rinha-backend/gen/rinha/public/table"
 	"strings"
+	"time"
 
-	jetPg "github.com/go-jet/jet/v2/postgres"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
 )
 
-type Person struct {
+type PersonInput struct {
 	Nickname  string   `json:"apelido"`
 	Name      string   `json:"nome"`
 	BirthDate string   `json:"nascimento"`
 	Stack     []string `json:"stack"`
 }
 
-func (p Person) validate() error {
+type Person struct {
+	ID        uuid.UUID `json:"id"`
+	Nickname  string    `json:"apelido"`
+	Name      string    `json:"nome"`
+	Birthdate time.Time `json:"nascimento"`
+	Stack     *string   `json:"stack"`
+	Search    string    `json:"search"`
+}
+
+func (p PersonInput) validate() error {
 	if p.Nickname == "" {
 		return errors.New("Nickname is required")
 	}
@@ -43,7 +50,7 @@ func (p Person) validate() error {
 func main() {
 	app := fiber.New()
 
-	db, err := sql.Open("postgres", "postgresql://postgres:postgres@postgres:5432/rinha?sslmode=disable")
+	db, err := sqlx.Connect("postgres", "postgresql://postgres:postgres@postgres:5432/rinha?sslmode=disable")
 	if err != nil {
 		fmt.Printf("err opening db conn: %v", err.Error())
 		return
@@ -72,10 +79,10 @@ func root(c *fiber.Ctx) error {
 	return c.SendString("Hello, World 👋 from docker!")
 }
 
-func createPerson(c *fiber.Ctx, db *sql.DB) error {
+func createPerson(c *fiber.Ctx, db *sqlx.DB) error {
 	body := c.Body()
 
-	person := Person{}
+	person := PersonInput{}
 	err := json.Unmarshal(body, &person)
 	if err != nil {
 		return c.Status(400).SendString(err.Error())
@@ -103,23 +110,13 @@ func createPerson(c *fiber.Ctx, db *sql.DB) error {
 		lowerCaseStack,
 	)
 
-	is := table.People.INSERT(
-		table.People.ID,
-		table.People.Nickname,
-		table.People.Name,
-		table.People.Birthdate,
-		table.People.Stack,
-		table.People.Search,
-	).VALUES(
-		uuid,
-		person.Nickname,
-		person.Name,
-		person.BirthDate,
-		pq.Array(person.Stack),
-		search,
+	_, err = db.Query(
+		`INSERT INTO people 
+		(id, nickname, name, birthdate, stack, search) 
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+		uuid, person.Nickname, person.Name, person.BirthDate, pq.Array(person.Stack), search,
 	)
 
-	_, err = is.Exec(db)
 	if err != nil {
 		if err.Error() == "pq: duplicate key value violates unique constraint \"people_nickname_key\"" {
 			return c.Status(422).SendString("Nickname already exists")
@@ -131,21 +128,14 @@ func createPerson(c *fiber.Ctx, db *sql.DB) error {
 	return c.Status(201).SendString("Successfully created person")
 }
 
-func getPerson(c *fiber.Ctx, db *sql.DB) error {
+func getPerson(c *fiber.Ctx, db *sqlx.DB) error {
 	id := c.Params("id")
-	person := model.People{}
 
-	ss := table.People.SELECT(
-		table.People.AllColumns,
-	).FROM(
-		table.People,
-	).WHERE(
-		table.People.ID.EQ(jetPg.UUID(uuid.MustParse(id))),
-	)
+	person := Person{}
 
-	err := ss.Query(db, &person)
+	err := db.Get(&person, "SELECT * FROM people WHERE id = $1", id)
 	if err != nil {
-		if err.Error() == "qrm: no rows in result set" {
+		if err.Error() == "sql: no rows in result set" {
 			return c.SendStatus(404)
 		}
 		return c.Status(500).SendString(fmt.Sprintf("err executing query: %v", err.Error()))
@@ -154,50 +144,24 @@ func getPerson(c *fiber.Ctx, db *sql.DB) error {
 	return c.Status(200).JSON(person)
 }
 
-func searchPerson(c *fiber.Ctx, db *sql.DB) error {
+func searchPerson(c *fiber.Ctx, db *sqlx.DB) error {
 	t := c.Query("t")
 	if t == "" {
 		return c.Status(400).SendString("t query param is required")
 	}
 	t = strings.ToLower(t)
 
-	people := []model.People{}
+	people := []Person{}
 
-	ss := table.People.SELECT(
-		table.People.ID,
-		table.People.Nickname,
-		table.People.Name,
-		table.People.Birthdate,
-		table.People.Stack,
-	).FROM(
-		table.People,
-	).WHERE(
-		table.People.Search.LIKE(jetPg.String(fmt.Sprintf("%%%s%%", t))),
-	)
-
-	err := ss.Query(db, &people)
-	if err != nil {
-		return c.Status(500).SendString(fmt.Sprintf("err executing query: %v", err.Error()))
-	}
+	db.Select(&people, "SELECT * FROM people WHERE search LIKE $1", fmt.Sprintf("%%%s%%", t))
 
 	return c.Status(200).JSON(people)
 }
 
-func getPeopleCount(c *fiber.Ctx, db *sql.DB) error {
-	// initialize a int count
-	// count := jetPg.COUNT
+func getPeopleCount(c *fiber.Ctx, db *sqlx.DB) error {
+	count := 0
 
-	// ss := table.People.SELECT(table.People.ID).FROM(table.People)
-	ss := table.People.SELECT(jetPg.COUNT(table.People.ID)).FROM(table.People)
-	res, err := ss.Exec(db)
-	if err != nil {
-		return c.Status(500).SendString(fmt.Sprintf("err executing query: %v", err.Error()))
-	}
-	ra, _ := res.RowsAffected()
+	db.Get(&count, "SELECT COUNT(*) FROM people")
 
-	// err := ss.Query(db, &count)
-	// if err != nil {
-	// 	return c.Status(500).SendString(fmt.Sprintf("err executing query: %v", err.Error()))
-	// }
-	return c.SendString(fmt.Sprintf("%d", ra))
+	return c.SendString(fmt.Sprintf("%d", count))
 }

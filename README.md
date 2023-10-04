@@ -28,7 +28,7 @@ flowchart TD
 - Go - programming language
 - Fiber - http server framework
 - Postgres - database
-- Go-jet - sql builder
+- sqlx - sql builder
 - Docker - containerize all services
 - Nginx - load balancer
 
