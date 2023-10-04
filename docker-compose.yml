@@ -1,10 +1,17 @@
 version: "3.8"
 
 services:
-  web:
+  api1:
     build: .
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
+    volumes:
+      - .:/app
+    command: air main.go
+  api2:
+    build: .
+    expose:
+      - "3000"
     volumes:
       - .:/app
     command: air main.go
@@ -20,6 +27,17 @@ services:
     volumes:
       - postgres-db:/var/lib/postgresql/data
       - ./db/:/docker-entrypoint-initdb.d/
+  nginx:
+    image: nginx
+    container_name: nginx
+    hostname: api
+    volumes:
+      - ./:/etc/nginx/
+    depends_on:
+      - api1
+      - api2
+    ports:
+      - "9999:9999"
 
 volumes:
   postgres-db:
